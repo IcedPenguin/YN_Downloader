@@ -20,8 +20,27 @@ echo "|                                            |"
 echo "+--------------------------------------------+"
 echo ""
 echo "Paste broadcast URL or username below (right click - Paste) and press Enter"
-echo "Example 1: https://www.younow.com/tinawoodsss/54726312/1877623/1043/b/June..."
-echo "Example 2: tinawoodsss"
+echo "Example 1: https://www.younow.com/example_user/54726312/1877623/1043/b/June..."
+echo "Example 2: example_user"
+echo ""
+echo "This script relise on several binary files located in ./_bin. You are responsible "
+echo "for finding these files. Apt-get or brew install them."
+echo "    file: ffmpeg"
+echo "    file: rtmpdump"
+echo "    file: xidel"
+echo "    file: wget"
+
+# TODO - updated program flow
+#   "URL or username (leave blank to quit):" 
+#   "[LIVE] $url is broadcasting now! Start recording (Y/n)? "
+#   "Broadcasts or Moments (b/m)?"
+#   "You can download these [broadcasts|moments]:"
+#   << present with list. >>
+#   "Type comma separated numbers, \"all\" to download everything,"
+#   " \"n\" to list next 10 broadcasts or leave blank to return: "
+#
+# TODO - extract program loop into series of functions
+
 
 mac=`uname -a | grep -i darwin`
 if [ "$mac"  != "" ]
@@ -54,8 +73,8 @@ function downloadVideo()
     mkdir -p ./_temp/$dir
     mkdir -p ./videos/$1
 
-    wget -q http://www.younow.com/php/api/younow/user -O ./_temp/$dir/session.txt  
-    wget -q http://www.younow.com/php/api/broadcast/videoPath/broadcastId=$broadcast_id -O ./_temp/$dir/rtmp.txt
+    wget --no-check-certificate -q http://www.younow.com/php/api/younow/user -O ./_temp/$dir/session.txt  
+    wget --no-check-certificate -q http://www.younow.com/php/api/broadcast/videoPath/broadcastId=$broadcast_id -O ./_temp/$dir/rtmp.txt
     session=`xidel -q ./_temp/$dir/rtmp.txt -e '$json("session")'`
     server=`xidel -q ./_temp/$dir/rtmp.txt -e '$json("server")'`
     stream=`xidel -q ./_temp/$dir/rtmp.txt -e '$json("stream")'`
@@ -161,7 +180,7 @@ do
     # ====== Download Videos for a Username ======
     elif [ "$url" != "" ]
     then
-        wget -q http://www.younow.com/php/api/broadcast/info/user=$url -O ./_temp/$url.json
+        wget --no-check-certificate -q http://www.younow.com/php/api/broadcast/info/user=$url -O ./_temp/$url.json
 
         echo ''
 
@@ -215,7 +234,7 @@ do
         unset videos
         while [ "$ex" == "false" ]
         do
-            wget -q http://www.younow.com/php/api/post/getBroadcasts/startFrom=$startTime/channelId=$user_id -O ./_temp/$url\_json.json
+            wget --no-check-certificate -q http://www.younow.com/php/api/post/getBroadcasts/startFrom=$startTime/channelId=$user_id -O ./_temp/$url\_json.json
             xidel -q -e '($json).posts().media.broadcast/join((videoAvailable,broadcastId,broadcastLengthMin,ddateAired),"-")' ./_temp/$url\_json.json > ./_temp/$url\_list.txt
             if [  -f ./_temp/$url\_list.txt ]
             then
