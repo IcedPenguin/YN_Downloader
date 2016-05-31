@@ -40,6 +40,8 @@ echo "    file: wget"
 #   " \"n\" to list next 10 broadcasts or leave blank to return: "
 #
 # TODO - extract program loop into series of functions
+#
+# TODO - when done recording, ask to tag file name.
 
 
 mac=`uname -a | grep -i darwin`
@@ -61,24 +63,56 @@ fi
 mkdir -p ./_temp
 mkdir -p ./videos
 
+# Function to find a unique file name to record the video to. This prevents overwriting
+# a previously recorded video. In the event of name colisions, the file is extended with
+# the letter 'a'.
+# 
+# @param: user name
+# @param: video type {live, broadcast, moment}
+# @param: video id
+# @param: extension
+function findNextAvailableFileName() 
+{
+    local timestamp=$(date +%s)
+    local user_name=$1
+    local video_type=$2
+    local video_id=$3
+    local extension=$4
+    local append="a"
+
+    local base_video_name=${user_name}_${video_type}_${video_id}_T${timestamp}
+    
+    while [ -e "${base_video_name}${extension}" ]; do
+        base_video_name="${base_video_name}${append}"
+    done
+
+    base_video_name="${base_video_name}.${extension}"
+    echo ${base_video_name}
+}
+
+
 # Function: Download a video.
-# @param: user ame
+# @param: user name
 # @param: video number (numeric order)
 # @param: broadcast id
 function downloadVideo()
 {
-    dir=$1_$2
-    broadcast_id=$3
+    local user_name=$1
+    local dir=$1_$2
+    local broadcast_id=$3
 
-    mkdir -p ./_temp/$dir
-    mkdir -p ./videos/$1
+    # echo "making dir: ./_temp/$dir"
+    # echo "making dir: ./videos/${user_name}"
+
+    mkdir -p "./_temp/$dir"
+    mkdir -p "./videos/${user_name}"
 
     wget --no-check-certificate -q http://www.younow.com/php/api/younow/user -O ./_temp/$dir/session.txt  
     wget --no-check-certificate -q http://www.younow.com/php/api/broadcast/videoPath/broadcastId=$broadcast_id -O ./_temp/$dir/rtmp.txt
-    session=`xidel -q ./_temp/$dir/rtmp.txt -e '$json("session")'`
-    server=`xidel -q ./_temp/$dir/rtmp.txt -e '$json("server")'`
-    stream=`xidel -q ./_temp/$dir/rtmp.txt -e '$json("stream")'`
-    hls=`xidel -q ./_temp/$dir/rtmp.txt -e '$json("hls")'`
+    local session=`xidel -q ./_temp/$dir/rtmp.txt -e '$json("session")'`
+    local server=`xidel -q ./_temp/$dir/rtmp.txt -e '$json("server")'`
+    local stream=`xidel -q ./_temp/$dir/rtmp.txt -e '$json("stream")'`
+    local hls=`xidel -q ./_temp/$dir/rtmp.txt -e '$json("hls")'`
 
     if $verbose ; then
         echo "--- stream information ---"
@@ -89,29 +123,22 @@ function downloadVideo()
         echo "--- stream information ---"
     fi
 
-    # Ensure we don't over write existing files
-    filename="${1}_${broadcast_id}_"
-    extension=".mkv"
-    append="a"
-    
-    while [ -e "${filename}${extension}" ]; do
-        filename="${filename}${append}"
-    done
-    filename="${filename}${extension}"
+    # find a unique file name for the download
+    local file_name=$(findNextAvailableFileName ${user_name} "broadcast" ${broadcast_id} "mkv")
 
     # Execute the command
     if [ "$mac" == "" ] 
     then
-        $terminal -x sh -c "$rtmp -v -o ./videos/$1/$filename -r \"$server$stream?sessionId=$session\" -p \"http://www.younow.com/\";bash;exit"
+        $terminal -x sh -c "$rtmp -v -o ./videos/${user_name}/${file_name} -r \"$server$stream?sessionId=$session\" -p \"http://www.younow.com/\";bash;exit"
     else
         if [[ "$hls" != "" ]]; then
-            echo "cd `pwd`; ffmpeg -i \"$hls\"  -c copy \"./videos/$1/$filename\" ; read something "  > ./_temp/$filename.command
+            echo "cd `pwd`; ffmpeg -i \"$hls\"  -c copy \"./videos/${user_name}/${file_name}\" ; read something "  > "./_temp/${file_name}.command"
         else
-            echo "cd `pwd`; rtmpdump -v -o ./videos/$1/$filename -r \"$server$stream?sessionId=$session\" -p \"http://www.younow.com/\"; read something" > ./_temp/$filename.command    
+            echo "cd `pwd`; rtmpdump -v -o ./videos/${user_name}/${file_name} -r \"$server$stream?sessionId=$session\" -p \"http://www.younow.com/\"; read something" > "./_temp/$filename.command" 
         fi
         
-        chmod +x ./_temp/$filename.command
-        open ./_temp/$filename.command
+        chmod +x "./_temp/${file_name}.command"
+        open "./_temp/${file_name}.command"
     fi
 }
 
@@ -121,34 +148,25 @@ function downloadVideo()
 # @param: moment id
 function downloadMoment() 
 {
-    user_name=$1
-    broadcast_id=$2
-    moment_id=$3
+    local user_name=$1
+    local broadcast_id=$2
+    local moment_id=$3
 
     mkdir -p ./videos/$user_name
 
-    # Ensure we don't over write existing files
-    filename="${user_name}_${broadcast_id}_moment_${moment_id}_"
-    extension=".mkv"
-    append="a"
-    
-    while [ -e "${filename}${extension}" ]; do
-        filename="${filename}${append}"
-    done
-    filename="${filename}${extension}"
+    local filename=$(findNextAvailableFileName ${user_name} "moment_${broadcast_id}" ${moment_id} "mkv")
 
     # Execute the command
     if [ "$mac" == "" ] 
     then
         echo "Not implemented:"
-        echo "  \"ffmpeg -i \"https://hls.younow.com/momentsplaylists/live/${moment_id}/${moment_id}.m3u8\"  -c copy \"./videos/$1/$filename\";\" "
+        echo "  \"ffmpeg -i \"https://hls.younow.com/momentsplaylists/live/${moment_id}/${moment_id}.m3u8\"  -c copy \"./videos/${user_name}/${filename}\";\" "
     else
-        echo "ffmpeg -i \"https://hls.younow.com/momentsplaylists/live/${moment_id}/${moment_id}.m3u8\"  -c copy \"./videos/$1/$filename\" ; read something"  > ./_temp/$filename.command
+        echo "ffmpeg -i \"https://hls.younow.com/momentsplaylists/live/${moment_id}/${moment_id}.m3u8\"  -c copy \"./videos/${user_name}/${filename}\" ; read something"  > "./_temp/${filename}.command"
 
-        chmod +x ./_temp/$filename.command
-        open ./_temp/$filename.command
+        chmod +x "./_temp/${filename}.command"
+        open "./_temp/${filename}.command"
     fi
-
 }
 
 # ====== Main Program Loop ======
@@ -180,14 +198,24 @@ do
     # ====== Download Videos for a Username ======
     elif [ "$url" != "" ]
     then
-        wget --no-check-certificate -q http://www.younow.com/php/api/broadcast/info/user=$url -O ./_temp/$url.json
+        user_name=$url
+        wget --no-check-certificate -q http://www.younow.com/php/api/broadcast/info/user=$user_name -O ./_temp/$url.json
 
         echo ''
 
         user_id=`xidel -q ./_temp/$url.json -e '$json("userId")'`
         error=`xidel -q ./_temp/$url.json -e '$json("errorCode")'`
+        errorMsg=`xidel -q ./_temp/$url.json -e '$json("errorMsg")'`
 
-        if [ "$error" == "0" ]
+
+        if [ "$error" -eq 101 ]
+        then
+            echo "There was a problem with the provided user name."
+            echo "    Error: $errorMsg"
+            echo " "
+            ex="true"
+        
+        elif [ "$error" -eq 0 ]
         then
 
             # ====== Download the User's Live Stream ======
@@ -201,7 +229,8 @@ do
                 host=`echo $temp | cut -d' ' -f1`
                 app=`echo $temp | cut -d' ' -f2`
                 stream=`echo $temp | cut -d' ' -f3`
-                filename="$url\_live_$broadcast_id.flv"
+                filename=$(findNextAvailableFileName ${user_name} "live" ${broadcast_id} "flv")
+
                 if [ ! -d ./videos/$url ]
                 then
                     mkdir ./videos/$url
@@ -209,11 +238,11 @@ do
 
                 if [ "$mac" == "" ]
                 then
-                    $terminal -x sh -c "$rtmp -v -o ./videos/$url/$filename -r rtmp://$host$app/$stream;bash"
+                    $terminal -x sh -c "$rtmp -v -o ./videos/$url/${filename} -r rtmp://$host$app/$stream;bash"
                 else
-                    echo "cd `pwd` ; rtmpdump -v -o ./videos/$url/$filename -r rtmp://$host$app/$stream" > ./_temp/$filename.command
-                    chmod +x ./_temp/$filename.command
-                    open ./_temp/$filename.command
+                    echo "cd `pwd` ; rtmpdump -v -o ./videos/$url/${filename} -r rtmp://$host$app/$stream" > "./_temp/${filename}.command"
+                    chmod +x "./_temp/${filename}.command"
+                    open "./_temp/${filename}.command"
                 fi
                 echo " OK! Started recording in a separate window."
             else
