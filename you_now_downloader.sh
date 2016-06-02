@@ -17,6 +17,9 @@ echo "|                                            |"
 echo "| 1.2   IcedPenguin           [ 2016-05-28 ] |"
 echo "|       * Fix for new YN streaming format    |"
 echo "|                                            |"
+echo "| 1.3   IcedPenguin           [ 2016-06-?? ] |"
+echo "|       * Updated the menuing system         |"
+echo "|                                            |"
 echo "+--------------------------------------------+"
 echo ""
 echo "Paste broadcast URL or username below (right click - Paste) and press Enter"
@@ -29,39 +32,236 @@ echo "    file: ffmpeg"
 echo "    file: rtmpdump"
 echo "    file: xidel"
 echo "    file: wget"
+echo " "
 
-# TODO - updated program flow
-#   "URL or username (leave blank to quit):" 
-#   "[LIVE] $url is broadcasting now! Start recording (Y/n)? "
-#   "Broadcasts or Moments (b/m)?"
-#   "You can download these [broadcasts|moments]:"
-#   << present with list. >>
-#   "Type comma separated numbers, \"all\" to download everything,"
-#   " \"n\" to list next 10 broadcasts or leave blank to return: "
+
+function mainProgramLoop() {
+    local status="running"
+    while [[ "${status}" == "running" ]]; do
+        echo ""
+        echo "URL or username (leave blank to quit):" 
+        read entered_name
+        web=`echo $entered_name | grep 'younow.com'`
+
+        if [ -z ${entered_name} ]; then
+            status="exit"
+
+        elif [ ! -z ${web} ]; then
+            directDownloadMenu
+
+        else
+            userDownloadMenu "${entered_name}"
+        fi
+    done
+}
+
+
+# @param: url
+function directDownloadMenu()
+{
+    local url=$1
+
+    user=`echo ${url} | cut -d'/' -f4`
+    broadcast_id=`echo ${url} | cut -d'/' -f5`
+    user_id=`echo ${url} | cut -d'/' -f6`
+
+    downloadVideo "${user}" "0" "${broadcast_id}"
+
+    echo " OK! Started download in a separate window."
+}
+
+# Handles the user interaction for downloading videos for a YouNow user. This
+# includes capturing live broadcasts, downloading past broadcasts, or downloading
+# moments.
 #
-# TODO - extract program loop into series of functions
+# @param: user_name
+function userDownloadMenu()
+{
+    local user_name=$1
+
+    while : ; do
+        echo " "
+        wget --no-check-certificate -q "http://www.younow.com/php/api/broadcast/info/user=${user_name}" -O "./_temp/${user_name}.json"
+
+        local user_id=`xidel -q ./_temp/${user_name}.json -e '$json("userId")'`
+        local error=`xidel -q ./_temp/${user_name}.json -e '$json("errorCode")'`
+        local errorMsg=`xidel -q ./_temp/${user_name}.json -e '$json("errorMsg")'`
+
+        if [ "${error}" -eq 101 ]
+        then
+            echo "There was a problem with the provided user name."
+            echo "    Error: $errorMsg"
+            echo " "
+            return
+
+        elif [ "${error}" -eq 0 ]; then
+            echo "[LIVE] ${user_name} is broadcasting now!"
+            echo "What would you like to do: Capture (L)ive Broadcast, download past (B)roadcasts, or download a (M)oment? (L / B / M)"
+
+        else    
+            echo "What would you like to do: download past (B)roadcasts or download a (M)oment? (B / M)"
+        fi
+
+        read user_action
+
+        
+        if [ "${user_action}" == "L" ] || [ "${user_action}" == "l" ]; then
+            echo "LIVE mode."
+            downloadLiveBroadcast "${user_name}"
+
+        elif  [ "${user_action}" == "B" ] || [ "${user_action}" == "b" ]; then
+            echo "Broadcast mode"
+            downloadPreviousBroadcastsMenu "${user_id}" "${user_name}"
+
+        elif  [ "${user_action}" == "M" ] || [ "${user_action}" == "m" ]; then
+            echo "Moment mode"
+            downloadMomentsMenu 
+
+        else
+            return # user did not enter a command, return to previous menu.
+        fi
+    done
+}
+
+# Performing the actual download of a live broadcasts. The download operation takes place
+# in a child process (new shell window).
 #
-# TODO - when done recording, ask to tag file name.
+# @param: user_name
+function downloadLiveBroadcast()
+{
+    local user_name=${1}
+
+    local broadcast_id=`xidel -q ./_temp/${user_name}.json -e '$json("broadcastId")'`
+    local temp=`xidel -q -e 'join(($json).media/(host,app,stream))' ./_temp/${user_name}.json`
+    local host=`echo $temp | cut -d' ' -f1`
+    local app=`echo $temp | cut -d' ' -f2`
+    local stream=`echo $temp | cut -d' ' -f3`
+    local filename=$(findNextAvailableFileName ${user_name} "live" ${broadcast_id} "flv")
+
+    if [ ! -d "./videos/${user_name}" ]
+    then
+        mkdir "./videos/${user_name}"
+    fi
+
+    if [ "$mac" == "" ]
+    then
+        $terminal -x sh -c "$rtmp -v -o ./videos/${user_name}/${filename} -r rtmp://$host$app/$stream; bash"
+    else
+        echo "cd `pwd` ; rtmpdump -v -o ./videos/${user_name}/${filename} -r rtmp://$host$app/$stream" > "./_temp/${filename}.command"
+        chmod +x "./_temp/${filename}.command"
+        open "./_temp/${filename}.command"
+    fi
+    echo " OK! Started recording in a separate window."
+}
 
 
-mac=`uname -a | grep -i darwin`
-if [ "$mac"  != "" ]
-then
-    mydir="$(dirname "$BASH_SOURCE")"
-    cd $mydir
-    cp ./_bin/rtmpdump /usr/local/bin
-    cp ./_bin/xidel /usr/local/bin
-    cp ./_bin/wget /usr/local/bin
-else
-    rtmp="wine ./_bin/rtmpdump.exe"
-    pid=`ps -p $$ -o ppid=`
-    ppid=`ps -o ppid= $pid`
-    terminal=`ps -p $ppid o args=`
-    echo $terminal
-fi
+# @param: user_id
+# @param: user_name
+function downloadPreviousBroadcastsMenu()
+{
+    local user_id=$1
+    local user_name=$2
 
-mkdir -p ./_temp
-mkdir -p ./videos
+    local ex="false"
+    local idx=1
+    local videos
+
+    while [ "$ex" == "false" ]
+    do
+        wget --no-check-certificate -q "http://www.younow.com/php/api/post/getBroadcasts/startFrom=$startTime/channelId=${user_id}" -O "./_temp/${user_name}_json.json"
+        xidel -q -e '($json).posts().media.broadcast/join((videoAvailable,broadcastId,broadcastLengthMin,ddateAired),"-")' "./_temp/${user_name}_json.json" > "./_temp/${user_name}_list.txt"
+        if [  -f "./_temp/${user_name}_list.txt" ]
+        then
+            echo "You can download these broadcasts:"
+            while read line 
+            do
+                available=`echo $line|cut -d'-' -f1`
+                broadcast_id=`echo $line|cut -d'-' -f2`
+                length=`echo $line|cut -d'-' -f3`
+                ddate=`echo $line | cut -d'-' -f4`
+                if [ "$available" == "1" ]
+                then
+                   current=""
+                   echo ${idx} ${length} ${ddate} - ${broadcast_id}
+                   videos[${idx}]=${broadcast_id}
+                   idx=$((idx + 1))
+                fi
+            done < "./_temp/${user_name}_list.txt"
+
+            echo "Type comma separated numbers, \"all\" to download everything,"
+            echo "\"n\" to list next 10 broadcasts or leave blank to return: "
+            read input      
+
+            if [ "$input" == "" ]
+            then
+                ex="true"
+            elif [ "$input" == "n" ]
+            then  
+                startTime=$(( startTime  + 10 ))
+            else
+                if [ "$input" == "all" ]
+                then
+                    for i in `seq 1 ${#videos[@]}`
+                    do
+                        downloadVideo "${user_name}" "$i" "${videos[$i]}"
+                    done
+                fi
+
+                while [ "$input" != "$current" ]
+                do
+                    current=`echo $input | cut -d',' -f1`
+                    input=`echo $input | cut -d',' -f2-`  
+                    downloadVideo "${user_name}" "${num1}" "${videos[${current}]}"
+                    num1=$((num1 + 1))
+                done
+                startTime=$(( startTime  + 10 ))
+            fi 
+        else
+            echo " - There's nothing to show."
+            ex="true"
+        fi
+    done
+}
+
+#
+# TODO
+#
+#
+#
+function downloadMomentsMenu()
+{
+    echo "Not yet implemented"
+}
+
+
+# Download a moment (portion of a video).
+#
+# @param: user name
+# @param: broadcast id
+# @param: moment id
+function downloadMoment() 
+{
+    local user_name=$1
+    local broadcast_id=$2
+    local moment_id=$3
+
+    mkdir -p "./videos/$user_name"
+
+    local filename=$(findNextAvailableFileName ${user_name} "moment_${broadcast_id}" ${moment_id} "mkv")
+
+    # Execute the command
+    if [ "$mac" == "" ] 
+    then
+        echo "Not implemented:"
+        echo "  \"ffmpeg -i \"https://hls.younow.com/momentsplaylists/live/${moment_id}/${moment_id}.m3u8\"  -c copy \"./videos/${user_name}/${filename}\";\" "
+    else
+        echo "ffmpeg -i \"https://hls.younow.com/momentsplaylists/live/${moment_id}/${moment_id}.m3u8\"  -c copy \"./videos/${user_name}/${filename}\" ; read something"  > "./_temp/${filename}.command"
+
+        chmod +x "./_temp/${filename}.command"
+        open "./_temp/${filename}.command"
+    fi
+}
+
 
 # Function to find a unique file name to record the video to. This prevents overwriting
 # a previously recorded video. In the event of name colisions, the file is extended with
@@ -98,21 +298,18 @@ function findNextAvailableFileName()
 function downloadVideo()
 {
     local user_name=$1
-    local dir=$1_$2
+    local dirr=$1_$2
     local broadcast_id=$3
 
-    # echo "making dir: ./_temp/$dir"
-    # echo "making dir: ./videos/${user_name}"
-
-    mkdir -p "./_temp/$dir"
+    mkdir -p "./_temp/${dirr}"
     mkdir -p "./videos/${user_name}"
 
-    wget --no-check-certificate -q http://www.younow.com/php/api/younow/user -O ./_temp/$dir/session.txt  
-    wget --no-check-certificate -q http://www.younow.com/php/api/broadcast/videoPath/broadcastId=$broadcast_id -O ./_temp/$dir/rtmp.txt
-    local session=`xidel -q ./_temp/$dir/rtmp.txt -e '$json("session")'`
-    local server=`xidel -q ./_temp/$dir/rtmp.txt -e '$json("server")'`
-    local stream=`xidel -q ./_temp/$dir/rtmp.txt -e '$json("stream")'`
-    local hls=`xidel -q ./_temp/$dir/rtmp.txt -e '$json("hls")'`
+    wget --no-check-certificate -q "http://www.younow.com/php/api/younow/user" -O "./_temp/${dirr}/session.txt"
+    wget --no-check-certificate -q "http://www.younow.com/php/api/broadcast/videoPath/broadcastId=${broadcast_id}" -O "./_temp/${dirr}/rtmp.txt"
+    local session=`xidel -q ./_temp/${dirr}/rtmp.txt -e '$json("session")'`
+    local server=`xidel -q ./_temp/${dirr}/rtmp.txt -e '$json("server")'`
+    local stream=`xidel -q ./_temp/${dirr}/rtmp.txt -e '$json("stream")'`
+    local hls=`xidel -q ./_temp/${dirr}/rtmp.txt -e '$json("hls")'`
 
     if $verbose ; then
         echo "--- stream information ---"
@@ -125,16 +322,21 @@ function downloadVideo()
 
     # find a unique file name for the download
     local file_name=$(findNextAvailableFileName ${user_name} "broadcast" ${broadcast_id} "mkv")
+    echo "user_name: ${user_name}"
+    echo "broadcast"
+    echo "broadcast_id: ${broadcast_id}"
+    echo "mkv"
+    echo "file_name: ${file_name}"
 
     # Execute the command
     if [ "$mac" == "" ] 
     then
-        $terminal -x sh -c "$rtmp -v -o ./videos/${user_name}/${file_name} -r \"$server$stream?sessionId=$session\" -p \"http://www.younow.com/\";bash;exit"
+        $terminal -x sh -c "$rtmp -v -o \"./videos/${user_name}/${file_name}\" -r \"$server$stream?sessionId=$session\" -p \"http://www.younow.com/\";bash;exit"
     else
         if [[ "$hls" != "" ]]; then
             echo "cd `pwd`; ffmpeg -i \"$hls\"  -c copy \"./videos/${user_name}/${file_name}\" ; read something "  > "./_temp/${file_name}.command"
         else
-            echo "cd `pwd`; rtmpdump -v -o ./videos/${user_name}/${file_name} -r \"$server$stream?sessionId=$session\" -p \"http://www.younow.com/\"; read something" > "./_temp/$filename.command" 
+            echo "cd `pwd`; rtmpdump -v -o \"./videos/${user_name}/${file_name}\" -r \"$server$stream?sessionId=$session\" -p \"http://www.younow.com/\"; read something" > "./_temp/$filename.command" 
         fi
         
         chmod +x "./_temp/${file_name}.command"
@@ -142,185 +344,44 @@ function downloadVideo()
     fi
 }
 
-# Function: Download a moment (portion of a video).
-# @param: user name
-# @param: broadcast id
-# @param: moment id
-function downloadMoment() 
+
+function checkDependencies()
 {
-    local user_name=$1
-    local broadcast_id=$2
-    local moment_id=$3
-
-    mkdir -p ./videos/$user_name
-
-    local filename=$(findNextAvailableFileName ${user_name} "moment_${broadcast_id}" ${moment_id} "mkv")
-
-    # Execute the command
-    if [ "$mac" == "" ] 
-    then
-        echo "Not implemented:"
-        echo "  \"ffmpeg -i \"https://hls.younow.com/momentsplaylists/live/${moment_id}/${moment_id}.m3u8\"  -c copy \"./videos/${user_name}/${filename}\";\" "
+    if [ "$mac" == "" ]; then
+        echo "Not tested. Good luck."   
+        dependencies=( "rtmp" "xidel" "wget" "ffmpeg")
     else
-        echo "ffmpeg -i \"https://hls.younow.com/momentsplaylists/live/${moment_id}/${moment_id}.m3u8\"  -c copy \"./videos/${user_name}/${filename}\" ; read something"  > "./_temp/${filename}.command"
-
-        chmod +x "./_temp/${filename}.command"
-        open "./_temp/${filename}.command"
+        dependencies=( "rtmpdump" "xidel" "wget" "ffmpeg")
     fi
+
+    for i in "${dependencies[@]}"
+    do
+        :
+        if ! hash ${i} 2>/dev/null; then
+            echo "Dependcy missing: ${i}"
+            echo "Please ensure all dependencies are on the PATH before launching the application."
+            echo ""
+            exit 1
+        fi
+    done
 }
 
-# ====== Main Program Loop ======
-end="false"
-while [ "$end" == "false" ]
-do
-    num1=1
-    startTime=0
-    ex="false"
 
-    echo "URL or username (leave blank to quit):" 
-    read url
+##################### Program Entry Point #####################
+# Set some program global variables
+mac=`uname -a | grep -i darwin`
 
-    web=`echo $url | grep 'younow.com'`
+# Locations for working files and final videos
+mkdir -p ./_temp
+mkdir -p ./videos
 
-    # ====== Download a Specific Address ======
-    if [ "$web" != "" ]
-    then
-        user=`echo $url | cut -d'/' -f4`
-        broadcast_id=`echo $url | cut -d'/' -f5`
-        user_id=`echo $url | cut -d'/' -f6`
+# Verify all of the helper tools are available, so the script doesn't crash later.
+checkDependencies
 
-        downloadVideo "$user" "0" "$broadcast_id"
+# Start the interactive menu
+mainProgramLoop
+echo "Thanks for using the downloader tool. Have a nice day."
 
-        echo " OK! Started downloading in a separate window."
-
-        num1=$((num1 + 1))
-
-    # ====== Download Videos for a Username ======
-    elif [ "$url" != "" ]
-    then
-        user_name=$url
-        wget --no-check-certificate -q http://www.younow.com/php/api/broadcast/info/user=$user_name -O ./_temp/$url.json
-
-        echo ''
-
-        user_id=`xidel -q ./_temp/$url.json -e '$json("userId")'`
-        error=`xidel -q ./_temp/$url.json -e '$json("errorCode")'`
-        errorMsg=`xidel -q ./_temp/$url.json -e '$json("errorMsg")'`
-
-
-        if [ "$error" -eq 101 ]
-        then
-            echo "There was a problem with the provided user name."
-            echo "    Error: $errorMsg"
-            echo " "
-            ex="true"
-        
-        elif [ "$error" -eq 0 ]
-        then
-
-            # ====== Download the User's Live Stream ======
-            echo "[LIVE] $url is broadcasting now! Start recording (Y/n)? "
-            read input
-
-            if [ "$input" != "n" ]
-            then
-                broadcast_id=`xidel -q ./_temp/$url.json -e '$json("broadcastId")'`
-                temp=`xidel -q -e 'join(($json).media/(host,app,stream))' ./_temp/$url.json`
-                host=`echo $temp | cut -d' ' -f1`
-                app=`echo $temp | cut -d' ' -f2`
-                stream=`echo $temp | cut -d' ' -f3`
-                filename=$(findNextAvailableFileName ${user_name} "live" ${broadcast_id} "flv")
-
-                if [ ! -d ./videos/$url ]
-                then
-                    mkdir ./videos/$url
-                fi
-
-                if [ "$mac" == "" ]
-                then
-                    $terminal -x sh -c "$rtmp -v -o ./videos/$url/${filename} -r rtmp://$host$app/$stream;bash"
-                else
-                    echo "cd `pwd` ; rtmpdump -v -o ./videos/$url/${filename} -r rtmp://$host$app/$stream" > "./_temp/${filename}.command"
-                    chmod +x "./_temp/${filename}.command"
-                    open "./_temp/${filename}.command"
-                fi
-                echo " OK! Started recording in a separate window."
-            else
-                rm ./_temp/$url*.json 2>/dev/null
-            fi
-
-            echo "Continue working with $url (Y/n)"
-            read input
-
-            if [ "$input" == "n" ]
-            then
-                ex="true"
-            fi
-        fi
-
-        # ====== Download the User's Past Streams ======
-        idx=1
-        unset videos
-        while [ "$ex" == "false" ]
-        do
-            wget --no-check-certificate -q http://www.younow.com/php/api/post/getBroadcasts/startFrom=$startTime/channelId=$user_id -O ./_temp/$url\_json.json
-            xidel -q -e '($json).posts().media.broadcast/join((videoAvailable,broadcastId,broadcastLengthMin,ddateAired),"-")' ./_temp/$url\_json.json > ./_temp/$url\_list.txt
-            if [  -f ./_temp/$url\_list.txt ]
-            then
-                echo "You can download these broadcasts:"
-                while read line 
-                do
-                    available=`echo $line|cut -d'-' -f1`
-                    broadcast_id=`echo $line|cut -d'-' -f2`
-                    length=`echo $line|cut -d'-' -f3`
-                    ddate=`echo $line | cut -d'-' -f4`
-                    if [ "$available" == "1" ]
-                    then
-                       current=""
-                       echo $idx $length $ddate - $broadcast_id
-                       videos[$idx]=$broadcast_id
-                       idx=$((idx + 1))
-                    fi
-                done < ./_temp/$url\_list.txt
-
-                echo "Type comma separated numbers, \"all\" to download everything,"
-                echo "\"n\" to list next 10 broadcasts or leave blank to return: "
-                read input      
-
-                if [ "$input" == "" ]
-                then
-                    ex="true"
-                elif [ "$input" == "n" ]
-                then  
-                    startTime=$(( startTime  + 10 ))
-                else
-                    if [ "$input" == "all" ]
-                    then
-                        for i in `seq 1 ${#videos[@]}`
-                        do
-                            downloadVideo "$url" "$i" "${videos[$i]}"
-                        done
-                    fi
-
-                    while [ "$input" != "$current" ]
-                    do
-                        current=`echo $input | cut -d',' -f1`
-                        input=`echo $input | cut -d',' -f2-`  
-                        downloadVideo "$url" "$num1" "${videos[$current]}"
-                        num1=$((num1 + 1))
-                    done
-                    startTime=$(( startTime  + 10 ))
-                fi 
-            else
-                echo " - There's nothing to show."
-                ex="true"
-            fi
-        done
-
-        startTime=0
-    else
-        end="true"
-    fi
-done
-
-rm -rf ./_temp/* 2>/dev/null
+# clean up all the temp files.
+rm -rf ./_temp/* 2>/dev/null 
+###############################################################
