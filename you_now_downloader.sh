@@ -2,6 +2,8 @@
 
 verbose=false
 
+source ./you_now_moments.sh
+
 echo "+--------------------------------------------+"
 echo "|        YouNow video downloader             |"
 echo "+--------------------------------------------+"
@@ -19,6 +21,7 @@ echo "|       * Fix for new YN streaming format    |"
 echo "|                                            |"
 echo "| 1.3   IcedPenguin           [ 2016-06-?? ] |"
 echo "|       * Updated the menuing system         |"
+echo "|       * Added moment support               |"
 echo "|                                            |"
 echo "+--------------------------------------------+"
 echo ""
@@ -115,7 +118,7 @@ function userDownloadMenu()
 
         elif  [ "${user_action}" == "M" ] || [ "${user_action}" == "m" ]; then
             echo "Moment mode"
-            downloadMomentsMenu 
+            downloadMomentsMenu $user_name $user_id
 
         else
             return # user did not enter a command, return to previous menu.
@@ -222,46 +225,6 @@ function downloadPreviousBroadcastsMenu()
         fi
     done
 }
-
-#
-# TODO
-#
-#
-#
-function downloadMomentsMenu()
-{
-    echo "Not yet implemented"
-}
-
-
-# Download a moment (portion of a video).
-#
-# @param: user name
-# @param: broadcast id
-# @param: moment id
-function downloadMoment() 
-{
-    local user_name=$1
-    local broadcast_id=$2
-    local moment_id=$3
-
-    mkdir -p "./videos/$user_name"
-
-    local filename=$(findNextAvailableFileName ${user_name} "moment_${broadcast_id}" ${moment_id} "mkv")
-
-    # Execute the command
-    if [ "$mac" == "" ] 
-    then
-        echo "Not implemented:"
-        echo "  \"ffmpeg -i \"https://hls.younow.com/momentsplaylists/live/${moment_id}/${moment_id}.m3u8\"  -c copy \"./videos/${user_name}/${filename}\";\" "
-    else
-        echo "ffmpeg -i \"https://hls.younow.com/momentsplaylists/live/${moment_id}/${moment_id}.m3u8\"  -c copy \"./videos/${user_name}/${filename}\" ; read something"  > "./_temp/${filename}.command"
-
-        chmod +x "./_temp/${filename}.command"
-        open "./_temp/${filename}.command"
-    fi
-}
-
 
 # Function to find a unique file name to record the video to. This prevents overwriting
 # a previously recorded video. In the event of name colisions, the file is extended with
