@@ -35,6 +35,7 @@ echo "    file: ffmpeg"
 echo "    file: rtmpdump"
 echo "    file: xidel"
 echo "    file: wget"
+echo "    file: jq"
 echo " "
 
 
@@ -84,11 +85,11 @@ function userDownloadMenu()
 
     while : ; do
         echo " "
-        wget --no-check-certificate -q "http://www.younow.com/php/api/broadcast/info/user=${user_name}" -O "./_temp/${user_name}.json"
+        wget --no-check-certificate -q "http://www.younow.com/php/api/broadcast/info/user=${user_name}" -O "./_temp/${user_name}_channel.json"
 
-        local user_id=`xidel -q ./_temp/${user_name}.json -e '$json("userId")'`
-        local error=`xidel -q ./_temp/${user_name}.json -e '$json("errorCode")'`
-        local errorMsg=`xidel -q ./_temp/${user_name}.json -e '$json("errorMsg")'`
+        local user_id=`cat  ./_temp/${user_name}_channel.json | ./jq -r '.user_id'`
+        local error=`cat    ./_temp/${user_name}_channel.json | ./jq -r '.errorCode'`
+        local errorMsg=`cat ./_temp/${user_name}_channel.json | ./jq -r '.errorMsg'`
 
         if [ "${error}" -eq 101 ]
         then
@@ -134,8 +135,8 @@ function downloadLiveBroadcast()
 {
     local user_name=${1}
 
-    local broadcast_id=`xidel -q ./_temp/${user_name}.json -e '$json("broadcastId")'`
-    local temp=`xidel -q -e 'join(($json).media/(host,app,stream))' ./_temp/${user_name}.json`
+    local broadcast_id=`xidel -q ./_temp/${user_name}_channel.json -e '$json("broadcastId")'`
+    local temp=`xidel -q -e 'join(($json).media/(host,app,stream))' ./_temp/${user_name}_channel.json`
     local host=`echo $temp | cut -d' ' -f1`
     local app=`echo $temp | cut -d' ' -f2`
     local stream=`echo $temp | cut -d' ' -f3`
@@ -171,9 +172,9 @@ function downloadPreviousBroadcastsMenu()
 
     while [ "$ex" == "false" ]
     do
-        wget --no-check-certificate -q "http://www.younow.com/php/api/post/getBroadcasts/startFrom=$startTime/channelId=${user_id}" -O "./_temp/${user_name}_json.json"
-        xidel -q -e '($json).posts().media.broadcast/join((videoAvailable,broadcastId,broadcastLengthMin,ddateAired),"-")' "./_temp/${user_name}_json.json" > "./_temp/${user_name}_list.txt"
-        if [  -f "./_temp/${user_name}_list.txt" ]
+        wget --no-check-certificate -q "http://www.younow.com/php/api/post/getBroadcasts/startFrom=$startTime/channelId=${user_id}" -O "./_temp/${user_name}_broadcasts.json"
+        xidel -q -e '($json).posts().media.broadcast/join((videoAvailable,broadcastId,broadcastLengthMin,ddateAired),"-")' "./_temp/${user_name}_broadcasts.json" > "./_temp/${user_name}_broadcast_list.json"
+        if [  -f "./_temp/${user_name}_broadcast_list.json" ]
         then
             echo "You can download these broadcasts:"
             while read line 
@@ -189,7 +190,7 @@ function downloadPreviousBroadcastsMenu()
                    videos[${idx}]=${broadcast_id}
                    idx=$((idx + 1))
                 fi
-            done < "./_temp/${user_name}_list.txt"
+            done < "./_temp/${user_name}_broadcast_list.json"
 
             echo "Type comma separated numbers, \"all\" to download everything,"
             echo "\"n\" to list next 10 broadcasts or leave blank to return: "
@@ -267,29 +268,26 @@ function downloadVideo()
     mkdir -p "./_temp/${dirr}"
     mkdir -p "./videos/${user_name}"
 
-    wget --no-check-certificate -q "http://www.younow.com/php/api/younow/user" -O "./_temp/${dirr}/session.txt"
+    # wget --no-check-certificate -q "http://www.younow.com/php/api/younow/user" -O "./_temp/${dirr}/session.txt"
     wget --no-check-certificate -q "http://www.younow.com/php/api/broadcast/videoPath/broadcastId=${broadcast_id}" -O "./_temp/${dirr}/rtmp.txt"
-    local session=`xidel -q ./_temp/${dirr}/rtmp.txt -e '$json("session")'`
-    local server=`xidel -q ./_temp/${dirr}/rtmp.txt -e '$json("server")'`
-    local stream=`xidel -q ./_temp/${dirr}/rtmp.txt -e '$json("stream")'`
-    local hls=`xidel -q ./_temp/${dirr}/rtmp.txt -e '$json("hls")'`
+
+    local session=`cat ./_temp/${dirr}/rtmp.txt | ./jq -r '.session'`
+    local server=`cat  ./_temp/${dirr}/rtmp.txt | ./jq -r '.server'`
+    local stream=`cat  ./_temp/${dirr}/rtmp.txt | ./jq -r '.stream'`
+    local hls=`cat     ./_temp/${dirr}/rtmp.txt | ./jq -r '.hls'`
+    
+    # find a unique file name for the download
+    local file_name=$(findNextAvailableFileName ${user_name} "broadcast" ${broadcast_id} "mkv")
 
     if $verbose ; then
-        echo "--- stream information ---"
+        echo "--- debug download information ---"
         echo "session: $session"
         echo "  sever: $server"
         echo " stream: $stream"
         echo "    hls: $hls"
-        echo "--- stream information ---"
+        echo "file_name: ${file_name}"
+        echo "--- debug download information ---"
     fi
-
-    # find a unique file name for the download
-    local file_name=$(findNextAvailableFileName ${user_name} "broadcast" ${broadcast_id} "mkv")
-    echo "user_name: ${user_name}"
-    echo "broadcast"
-    echo "broadcast_id: ${broadcast_id}"
-    echo "mkv"
-    echo "file_name: ${file_name}"
 
     # Execute the command
     if [ "$mac" == "" ] 
@@ -312,9 +310,9 @@ function checkDependencies()
 {
     if [ "$mac" == "" ]; then
         echo "Not tested. Good luck."   
-        dependencies=( "rtmp" "xidel" "wget" "ffmpeg")
+        dependencies=( "rtmp" "xidel" "wget" "ffmpeg" "jq")
     else
-        dependencies=( "rtmpdump" "xidel" "wget" "ffmpeg")
+        dependencies=( "rtmpdump" "xidel" "wget" "ffmpeg" "jq")
     fi
 
     for i in "${dependencies[@]}"
