@@ -87,7 +87,7 @@ function userDownloadMenu()
         echo " "
         wget --no-check-certificate -q "http://www.younow.com/php/api/broadcast/info/user=${user_name}" -O "./_temp/${user_name}_channel.json"
 
-        local user_id=`cat  ./_temp/${user_name}_channel.json | ./jq -r '.user_id'`
+        local user_id=`cat  ./_temp/${user_name}_channel.json | ./jq -r '.userId'`
         local error=`cat    ./_temp/${user_name}_channel.json | ./jq -r '.errorCode'`
         local errorMsg=`cat ./_temp/${user_name}_channel.json | ./jq -r '.errorMsg'`
 
@@ -186,7 +186,7 @@ function downloadPreviousBroadcastsMenu()
                 if [ "$available" == "1" ]
                 then
                    current=""
-                   echo ${idx} ${length} ${ddate} - ${broadcast_id}
+                   echo "${idx} ${length} ${ddate} - ${broadcast_id}"
                    videos[${idx}]=${broadcast_id}
                    idx=$((idx + 1))
                 fi
@@ -292,14 +292,10 @@ function downloadVideo()
     # Execute the command
     if [ "$mac" == "" ] 
     then
-        $terminal -x sh -c "$rtmp -v -o \"./videos/${user_name}/${file_name}\" -r \"$server$stream?sessionId=$session\" -p \"http://www.younow.com/\";bash;exit"
+        $terminal -x sh -c "./you_now_broadcasts.sh linux ${user_name} ${file_name} ${hls} ${server} ${stream} ${session}"
     else
-        if [[ "$hls" != "" ]]; then
-            echo "cd `pwd`; ffmpeg -i \"$hls\"  -c copy \"./videos/${user_name}/${file_name}\" ; read something "  > "./_temp/${file_name}.command"
-        else
-            echo "cd `pwd`; rtmpdump -v -o \"./videos/${user_name}/${file_name}\" -r \"$server$stream?sessionId=$session\" -p \"http://www.younow.com/\"; read something" > "./_temp/$filename.command" 
-        fi
-        
+
+        echo "cd `pwd`; ./you_now_broadcasts.sh mac ${user_name} ${file_name} ${hls} ${server} ${stream} ${session} "  > "./_temp/${file_name}.command"
         chmod +x "./_temp/${file_name}.command"
         open "./_temp/${file_name}.command"
     fi
