@@ -91,14 +91,14 @@ function userDownloadMenu()
         local error=`cat    ./_temp/${user_name}_channel.json | ./jq -r '.errorCode'`
         local errorMsg=`cat ./_temp/${user_name}_channel.json | ./jq -r '.errorMsg'`
 
-        if [ "${error}" -eq 101 ]
+        if [ "${error}" == "101" ]
         then
             echo "There was a problem with the provided user name."
             echo "    Error: $errorMsg"
             echo " "
             return
 
-        elif [ "${error}" -eq 0 ]; then
+        elif [ "${error}" == "0" ]; then
             echo "[LIVE] ${user_name} is broadcasting now!"
             echo "What would you like to do: Capture (L)ive Broadcast, download past (B)roadcasts, or download a (M)oment? (L / B / M)"
 
@@ -140,20 +140,22 @@ function downloadLiveBroadcast()
     local host=`echo $temp | cut -d' ' -f1`
     local app=`echo $temp | cut -d' ' -f2`
     local stream=`echo $temp | cut -d' ' -f3`
-    local filename=$(findNextAvailableFileName ${user_name} "live" ${broadcast_id} "flv")
+    local file_name=$(findNextAvailableFileName ${user_name} "live" ${broadcast_id} "flv")
 
     if [ ! -d "./videos/${user_name}" ]
     then
         mkdir "./videos/${user_name}"
     fi
 
-    if [ "$mac" == "" ]
+    # Execute the command
+    if [ "$mac" == "" ] 
     then
-        $terminal -x sh -c "$rtmp -v -o ./videos/${user_name}/${filename} -r rtmp://$host$app/$stream; bash"
+        $terminal -x sh -c "./you_now_broadcasts.sh live linux ${user_name} ${file_name} ${host} ${app} ${stream}"
     else
-        echo "cd `pwd` ; rtmpdump -v -o ./videos/${user_name}/${filename} -r rtmp://$host$app/$stream" > "./_temp/${filename}.command"
-        chmod +x "./_temp/${filename}.command"
-        open "./_temp/${filename}.command"
+
+        echo "cd `pwd`; ./you_now_broadcasts.sh live mac ${user_name} ${file_name} ${host} ${app} ${stream}"  > "./_temp/${file_name}.command"
+        chmod +x "./_temp/${file_name}.command"
+        open "./_temp/${file_name}.command"
     fi
     echo " OK! Started recording in a separate window."
 }
@@ -292,10 +294,10 @@ function downloadVideo()
     # Execute the command
     if [ "$mac" == "" ] 
     then
-        $terminal -x sh -c "./you_now_broadcasts.sh linux ${user_name} ${file_name} ${hls} ${server} ${stream} ${session}"
+        $terminal -x sh -c "./you_now_broadcasts.sh broadcast linux ${user_name} ${file_name} ${hls} ${server} ${stream} ${session}"
     else
 
-        echo "cd `pwd`; ./you_now_broadcasts.sh mac ${user_name} ${file_name} ${hls} ${server} ${stream} ${session} "  > "./_temp/${file_name}.command"
+        echo "cd `pwd`; ./you_now_broadcasts.sh broadcast mac ${user_name} ${file_name} ${hls} ${server} ${stream} ${session} "  > "./_temp/${file_name}.command"
         chmod +x "./_temp/${file_name}.command"
         open "./_temp/${file_name}.command"
     fi

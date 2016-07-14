@@ -6,12 +6,35 @@
 # Define a trap function, to intercept cntl-c and perform clean up operations
 #
 function finish() {
-    echo "trap activated"
-    read something
+    echo "Should the downloaded broadcast be deleted? (D)" 
+    read delete_file
+    if [ "${delete_file}" == "D" ] || [ "${delete_file}" == "d" ]; then
+        rm "${file_location}"
+    fi
 }
 trap finish EXIT
 
-echo "---- external script is running -----"
+
+# Perform the work of actually downloading a live broadcast.
+function downloadLive()
+{
+    platform=$1
+    user_name=$2
+    file_name=$3
+    host=$4
+    app=$5
+    stream=$6
+
+    file_location="./videos/${user_name}/${file_name}"
+
+    if [ "${platform}" == "linux" ]
+    then
+        rtmp -v -o "${file_location}" -r "rtmp://${host}${app}/${stream}";
+    else
+        cd `pwd` ; 
+        rtmpdump -v -o "${file_location}" -r "rtmp://${host}${app}/${stream}"
+    fi
+}
 
 
 # Perform the work of actually downloading a user's past broadcast.
@@ -25,20 +48,22 @@ function downloadBroadcast()
     stream=$6
     session=$7
 
+    file_location="./videos/${user_name}/${file_name}"
+
     if [ "${platform}" == "mac" ]; then
         echo "mac"
         if [[ "$hls" != "" ]]; then
             cd `pwd`; 
-            ffmpeg -i "$hls"  -c copy "./videos/${user_name}/${file_name}" ; 
+            ffmpeg -i "$hls"  -c copy "$file_location" ; 
         else
             cd `pwd`; 
-            rtmpdump -v -o "./videos/${user_name}/${file_name}" -r "$server$stream?sessionId=$session" -p "http://www.younow.com/"; 
+            rtmpdump -v -o "$file_location" -r "$server$stream?sessionId=$session" -p "http://www.younow.com/"; 
         fi
 
     elif [ "${platform}" == "linux" ]; then
         echo "linux"
 
-        $rtmp -v -o "./videos/${user_name}/${file_name}" -r "$server$stream?sessionId=$session" -p "http://www.younow.com/"; 
+        $rtmp -v -o "$file_location" -r "$server$stream?sessionId=$session" -p "http://www.younow.com/"; 
         bash; 
         exit
     else
@@ -46,4 +71,11 @@ function downloadBroadcast()
     fi
 }
 
-downloadBroadcast $1 $2 $3 $4 $5 $6 $7
+if [ "$1" == "broadcast" ]; then
+    downloadBroadcast $2 $3 $4 $5 $6 $7 $8
+
+elif [ "$1" == "live" ]; then
+    downloadLive $2 $3 $4 $5 $6 $7
+fi
+
+
